@@ -1,0 +1,235 @@
+---
+title: "HW3"
+author: "JunLu"
+date: "4/5/2019"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      message = FALSE,
+                      warning = FALSE)
+library(tidyverse)
+library(GGally)
+library(caret)
+library(glmnet)
+library(MASS) #LDA QDA
+library(e1071) #naive bayes
+library(pROC) # roc
+library(AppliedPredictiveModeling) # set theme
+
+```
+
+## Import the data
+```{r}
+library(ISLR)
+data("Weekly")
+```
+
+## (a) 
+Produce some graphical summaries of the Weekly data.
+
+### Desctiptive statistics
+```{r}
+dim(Weekly)
+summary(Weekly)
+```
+
+There are 1089 observations and 9 variables in this dataset.
+
+
+
+### Distribution of continuous variables
+```{r}
+transparentTheme(trans = .4)
+featurePlot(x = Weekly[, 1:8],
+            y = Weekly$Direction,
+            scales = list(x = list(relation = "free"), y = list(relation = "free")),
+            plot = "density", pch = "|",auto.key = list(columns = 2))
+```
+After visualizing the distributions of each continuous variable by direction,  we can't see some different patterns of distributions between different directions in the five Lag variables and Volume.
+
+### Pair plots
+```{r}
+ggpairs(Weekly, 
+        columns = 1:8,
+        upper = list(continuous = "points"),
+        lower = "blank",
+        aes(colour = Direction, alpha = 0.5)
+        )
+```
+Even in pair plots, we can't separate different direction by just combining five Lag variables and Volume.
+
+
+
+### (b)
+Use the full data set to perform a logistic regression with Directionas the response and the five Lag variables plus Volume as predictors. Do any of the predictors appear to be statistically significant?  If so, which ones?
+```{r}
+glm.fit = glm(Direction~.,data = Weekly[c(-1, -8)],family = binomial)
+summary(glm.fit)
+contrasts(Weekly$Direction)
+```
+
+Lag2 variable appear to be statistically significant (Pr = 0.0296 < 0.05). 
+
+### (c)
+Compute the confusion matrix and overall fraction of correct predictions. Briefly explain what the confusion matrix is telling you.
+
+We use Bayes classifier (cutoff 0.5).
+```{r}
+glm_pred_prob = predict(glm.fit, type = "response")
+glm_pred = rep("Down", length(glm_pred_prob))
+glm_pred[glm_pred_prob > 0.5] = "Up"
+```
+
+#### Overall fraction of correct predictions.
+```{r}
+sum(glm_pred == Weekly$Direction)/length(glm_pred_prob)
+```
+Overall fraction of correct predictions is 56.11%.
+
+#### The confusion matrix
+```{r}
+confusionMatrix(data = as.factor(glm_pred),
+                reference = Weekly$Direction,
+                positive = "Up")
+```
+
+The positive we defined is "Up". The negative is "down".
+
+* The accuracy (overall fraction of correct predictions) is 0.5611.
+* The kappa (the agreement between the preditive value and the true value) is 0.035, which is small.
+* The sensitivity (the proportion of actual "Up" that are correctly identified) is 92.07%
+* The specificity (the proportion of actual "Down" that are correctly identified) is 11.16%. This model does not have a good performance in identifying "Down".
+* The PPV is 56.43% and NPV is 53.94%.
+* And there are other statistics in the confusion matrix.
+
+
+
+### (d)
+Plot the ROC curve using the predicted probability from logistic regression and report the AUC.
+
+```{r}
+roc_glm = roc(as.factor(Weekly$Direction), glm_pred_prob)
+plot(roc_glm, legacy.axes = TRUE, print.auc = TRUE)
+plot(smooth(roc_glm), col = 4, add = TRUE)
+```
+The AUC is 0.554 which is close to 0.5, thus our model may not be a good classifier. 
+
+### (e)
+Now fit the logistic regression model using a training data period from 1990 to 2008, with Lag1 and Lag2 as the predictors. Plot the ROC curve using the held out data (that is, the data from 2009 and 2010) and report the AUC.
+
+```{r}
+train = Weekly %>% 
+    filter(Year < 2009) %>% 
+    dplyr::select(Lag1, Lag2, Direction)
+
+test = Weekly %>% 
+    filter(Year >= 2009) %>% 
+    dplyr::select(Lag1, Lag2, Direction)
+```
+
+#### Fit the logistic model
+```{r}
+glm.fit2 = glm(Direction ~ ., data = train,family = binomial)
+summary(glm.fit2)
+contrasts(train$Direction)
+```
+
+#### Plot the ROC using test data
+```{r}
+glm_pred_prob2 = predict(glm.fit2, type = "response", newdata = test)
+roc_glm2 <- roc(test$Direction, glm_pred_prob2)
+plot(roc_glm2, legacy.axes = TRUE, print.auc = TRUE)
+plot(smooth(roc_glm2), col = 4, add = TRUE)
+```
+The AUC is 0.556
+
+
+
+### (f)
+Repeat (e) using LDA and QDA.
+
+#### LDA
+##### Fit the LDA model
+```{r}
+lda_fit = lda(Direction ~ ., data = train) 
+plot(lda_fit)
+```
+
+##### Plot the ROC using test data
+```{r}
+lda_pred = predict(lda_fit, newdata = test) 
+head(lda_pred$posterior)
+roc_lda = roc(test$Direction, lda_pred$posterior[,2], levels = c("Down", "Up"))
+plot(roc_lda, legacy.axes = TRUE, print.auc = TRUE) 
+plot(smooth(roc_lda), col = 4, add = TRUE)
+```
+The AUC is 0.557
+
+#### QDA
+
+##### Fit the QDA model
+```{r}
+qda_fit = qda(Direction ~ ., data = train) 
+qda_pred = predict(qda_fit, newdata = test) 
+```
+
+##### Plot the ROC using test data
+```{r}
+qda_pred = predict(qda_fit, newdata = test) 
+roc_qda = roc(test$Direction, qda_pred$posterior[,2], levels = c("Down", "Up"))
+plot(roc_qda, legacy.axes = TRUE, print.auc = TRUE) 
+plot(smooth(roc_qda), col = 4, add = TRUE)
+```
+The AUC is 0.529
+
+### (g)
+Repeat (e) using KNN. Briefly discuss your results.
+```{r}
+set.seed(1)
+ctrl = trainControl(method = "repeatedcv",
+                    repeats = 5,
+                    summaryFunction = twoClassSummary,
+                    classProbs = TRUE)
+
+knn_fit = train(Direction ~ ., data = train,
+                method = "knn",
+                trControl = ctrl,
+                preProcess = c("center","scale"), 
+                metric = "ROC",
+                tuneGrid = data.frame(k = seq(1, 500, by = 5)))
+
+ggplot(knn_fit)
+
+knn_fit$bestTune
+```
+
+The best tune is k = 496. We can't see a clear upward and then a downward trend in the range we try. But when the K is greater 500, the model fitting process can be problematic. Thus we only try 1 to 500.
+
+
+```{r}
+knn_predict =  predict.train(knn_fit, newdata = test , type = "prob")
+knn_roc = roc(test$Direction, knn_predict[,"Up"], levels = c("Down", "Up"))
+plot(knn_roc, legacy.axes = TRUE, print.auc = TRUE)
+plot(smooth(knn_roc), col = 4, add = TRUE)
+```
+
+The AUC is 0.530.
+
+## Conclusion
+```{r}
+table = tibble(
+    metric = 'AUC', 
+    logistic = 0.556, 
+    lda = 0.557,
+    qda = 0.529,
+    knn = 0.530
+    )
+
+table %>% knitr::kable(digits = 3)
+```
+
+By comparing AUC using test data, we can see that no one model predicts the data direction (all are near 0.5), but LDA has a relatively higher performance on this test data by using AUC as a metric.
+
+(We don't choose model by test data. Just in order to answer this homework questions, we use test data)
